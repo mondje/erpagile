@@ -3,10 +3,11 @@
 Trois façons, de la plus simple à la plus manuelle :
 
 1. **Application « ERP Agile Serveur »** (Windows, macOS, Linux) : un assistant installe ERP Agile sur ce poste, ou sur un serveur distant par SSH, sans aucune commande. Elle sert ensuite à démarrer, arrêter, sauvegarder et mettre à jour.
-2. **Script** (serveur Linux) : copiez ce dossier sur le serveur, puis :
+2. **Script** (serveur Linux) : en une ligne,
    ```sh
-   sh install.sh
+   curl -fsSL https://raw.githubusercontent.com/mondje/erpagile/main/get.sh | sh
    ```
+   ou, avec ce dossier copié sur le serveur, `sh install.sh`.
    Le script vérifie Docker (et propose de l'installer), pose deux questions (nom de domaine, email), crée les secrets, télécharge les images et démarre ERP Agile. Sans question : `sh install.sh --domain=erp.client.ci --email=it@client.ci --yes`.
 3. **À la main** : `compose.yaml` et un `.env` (voir `install.sh` pour les variables).
 
