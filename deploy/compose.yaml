@@ -1,0 +1,118 @@
+# ERP Agile — installation de production (images publiées, rien à compiler).
+#
+# Installée et tenue à jour par install.sh / erpagile.sh, ou par l'application
+# « ERP Agile Serveur ». Réglages dans .env (créé par l'installation).
+name: ${COMPOSE_PROJECT_NAME:-erpagile}
+
+x-app-env: &app-env
+  APP_ENV: prod
+  APP_DEBUG: "0"
+  APP_SECRET: ${APP_SECRET:?APP_SECRET manquant dans .env}
+  DATABASE_URL: postgresql://erp:${POSTGRES_PASSWORD}@database:5432/erpagile?serverVersion=16&charset=utf8
+  JWT_PASSPHRASE: ${JWT_PASSPHRASE:?JWT_PASSPHRASE manquant dans .env}
+  MAILER_DSN: ${MAILER_DSN:-null://null}
+  MAILER_FROM: ${MAILER_FROM:-ERP Agile <no-reply@localhost>}
+  APP_FRONTEND_URL: ${PUBLIC_URL:-http://localhost}
+  APP_DOWNLOADS_URL: ${DOWNLOADS_URL:-https://github.com/mondje/erpagile/releases/latest}
+  CORS_ALLOW_ORIGIN: ${CORS_ALLOW_ORIGIN:-^$}
+  TRUSTED_PROXIES: 127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+  MARKETPLACE_URL: ${MARKETPLACE_URL:-}
+  MARKETPLACE_TOKEN: ${MARKETPLACE_TOKEN:-}
+  MARKETPLACE_PUBLIC_KEYS: ${MARKETPLACE_PUBLIC_KEYS:-}
+  MESSENGER_TRANSPORT_DSN: redis://redis:6379/messages
+  UPDATER_ENABLED: ${UPDATER_ENABLED:-0}
+
+services:
+  # Entrée unique : HTTPS automatique (Let's Encrypt) quand un nom de domaine
+  # est donné, sinon HTTP sur le réseau local.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    # Sans fichier de configuration : un nom de domaine donne HTTPS automatique,
+    # « :80 » répond en HTTP sur le réseau local.
+    command: ["caddy", "reverse-proxy", "--from", "${SITE_ADDRESS:-:80}", "--to", "web:80"]
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web]
+
+  # Interface (React) et aiguillage vers l'API.
+  web:
+    image: ${IMAGE_REGISTRY:-ghcr.io/mondje/erpagile}/web:${ERP_VERSION:-stable}
+    restart: unless-stopped
+    volumes:
+      - uploads:/var/www/uploads:ro
+    depends_on: [php]
+
+  php:
+    image: ${IMAGE_REGISTRY:-ghcr.io/mondje/erpagile}/php:${ERP_VERSION:-stable}
+    restart: unless-stopped
+    environment: *app-env
+    volumes:
+      - uploads:/var/www/app/public/uploads
+      - modules:/var/www/app/src/Modules
+      - jwt:/var/www/app/config/jwt
+      - app_var:/var/www/app/var
+      - updater:/var/www/app/var/updater
+    depends_on: [database, redis]
+
+  worker:
+    image: ${IMAGE_REGISTRY:-ghcr.io/mondje/erpagile}/php:${ERP_VERSION:-stable}
+    restart: unless-stopped
+    command: ["php", "bin/console", "messenger:consume", "async", "--time-limit=3600"]
+    environment: *app-env
+    volumes:
+      - uploads:/var/www/app/public/uploads
+      - modules:/var/www/app/src/Modules
+      - jwt:/var/www/app/config/jwt
+      - app_var:/var/www/app/var
+    depends_on: [php]
+
+  database:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: erpagile
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant dans .env}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp -d erpagile"]
+      interval: 10s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  # Mises à jour depuis l'écran Administration › Maintenance : lit les demandes
+  # déposées par l'ERP (liste fermée d'actions) et remplace les images.
+  # Activé par COMPOSE_PROFILES=updater (install.sh sous Linux et macOS) ; sous
+  # Windows, c'est l'application « ERP Agile Serveur » qui fait les mises à jour.
+  updater:
+    image: docker:27-cli
+    profiles: ["updater"]
+    restart: unless-stopped
+    working_dir: ${ERPAGILE_DIR:-/opt/erpagile}
+    entrypoint: ["sh", "${ERPAGILE_DIR:-/opt/erpagile}/updater/updater.sh"]
+    environment:
+      ERPAGILE_DIR: ${ERPAGILE_DIR:-/opt/erpagile}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:${ERPAGILE_DIR:-/opt/erpagile}
+      - updater:/exchange
+
+volumes:
+  database:
+  uploads:
+  modules:
+  jwt:
+  app_var:
+  updater:
+  caddy_data:
+  caddy_config:
